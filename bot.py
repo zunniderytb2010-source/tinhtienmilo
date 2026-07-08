@@ -417,6 +417,11 @@ async def on_message(message: discord.Message):
 
         await save_data(data)
 
+        total_videos = count_cycle_videos(worker_data, cycle_key)
+
+    total_money = total_videos * PRICE_PER_VIDEO
+    month_number = int(cycle_key.split("-")[1])
+
     print(f"Đã ghi nhận video của {WORKER_NAME}: {video_id} | cycle {cycle_key}")
 
     # Thả icon để thấy ngay là đã ghi nhận
@@ -424,6 +429,16 @@ async def on_message(message: discord.Message):
         await message.add_reaction("💰")
     except Exception:
         pass
+
+    # Nhắn thông báo cộng tiền
+    try:
+        await message.channel.send(
+            f"<@{TSZ_USER_ID}> {WORKER_NAME} đã ra thêm 1 video và được "
+            f"+{money_format(PRICE_PER_VIDEO)}đ, tổng tháng {month_number} hiện tại là "
+            f"{money_format(total_money)}đ ({total_videos} video)."
+        )
+    except Exception as e:
+        print(f"Gửi thông báo cộng tiền thất bại: {e}")
 
     await bot.process_commands(message)
 
