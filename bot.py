@@ -5,10 +5,11 @@ import asyncio
 import json
 import os
 import re
-from pathlib import Path
 from datetime import datetime, date, timezone
 from zoneinfo import ZoneInfo
 
+import asyncpg
+from aiohttp import web
 from dotenv import load_dotenv
 
 
@@ -17,6 +18,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
+
+# Chuỗi kết nối Postgres (Neon / Supabase). Dạng:
+# postgresql://user:pass@host/dbname?sslmode=require
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 VIDEO_CHANNEL_ID = int(os.getenv("VIDEO_CHANNEL_ID", "0"))
 REPORT_CHANNEL_ID = int(os.getenv("REPORT_CHANNEL_ID", str(VIDEO_CHANNEL_ID)))
@@ -29,7 +34,9 @@ PRICE_PER_VIDEO = int(os.getenv("PRICE_PER_VIDEO", "113000"))
 
 START_CYCLE_KEY = os.getenv("START_CYCLE_KEY", "2026-07")
 
-DATA_FILE = Path(os.getenv("DATA_FILE", "milo_pay.json"))
+# Khóa của dòng dữ liệu trong bảng Postgres
+DATA_KEY = os.getenv("DATA_KEY", "payroll")
+
 TZ = ZoneInfo(os.getenv("TIMEZONE", "Asia/Ho_Chi_Minh"))
 
 REPORT_HOUR = int(os.getenv("REPORT_HOUR", "9"))
@@ -37,18 +44,24 @@ REPORT_MINUTE = int(os.getenv("REPORT_MINUTE", "0"))
 
 COMMAND_PREFIX = os.getenv("COMMAND_PREFIX", "!")
 
+# Render tự set PORT cho Web Service. Local thì mặc định 10000.
+WEB_PORT = int(os.getenv("PORT", "10000"))
+
 
 if not TOKEN:
-    raise RuntimeError("Thiếu DISCORD_TOKEN trong file .env")
+    raise RuntimeError("Thiếu DISCORD_TOKEN trong biến môi trường")
+
+if not DATABASE_URL:
+    raise RuntimeError("Thiếu DATABASE_URL trong biến môi trường")
 
 if VIDEO_CHANNEL_ID == 0:
-    raise RuntimeError("Thiếu VIDEO_CHANNEL_ID trong file .env")
+    raise RuntimeError("Thiếu VIDEO_CHANNEL_ID trong biến môi trường")
 
 if YOUTUBE_BOT_ID == 0:
-    raise RuntimeError("Thiếu YOUTUBE_BOT_ID trong file .env")
+    raise RuntimeError("Thiếu YOUTUBE_BOT_ID trong biến môi trường")
 
 if TSZ_USER_ID == 0:
-    raise RuntimeError("Thiếu TSZ_USER_ID trong file .env")
+    raise RuntimeError("Thiếu TSZ_USER_ID trong biến môi trường")
 
 
 # ================== DISCORD SETUP ==================
@@ -56,57 +69,107 @@ if TSZ_USER_ID == 0:
 intents = discord.Intents.default()
 intents.message_content = True
 
-bot = commands.Bot(command_prefix=COMMAND_PREFIX, intents=intents)
-
 data_lock = asyncio.Lock()
 
+# Pool kết nối Postgres, khởi tạo trong setup_hook
+db_pool = None
 
-# ================== DATA ==================
 
-def load_data():
-    if not DATA_FILE.exists():
-        return {}
+class PayBot(commands.Bot):
+    async def setup_hook(self):
+        # Chạy 1 lần trước khi bot kết nối Discord.
+        await init_db()
+        asyncio.create_task(start_web_server())
 
-    try:
-        with DATA_FILE.open("r", encoding="utf-8") as f:
-            data = json.load(f)
 
-        if not isinstance(data, dict):
-            return {}
+bot = PayBot(command_prefix=COMMAND_PREFIX, intents=intents)
 
-        return data
 
-    except json.JSONDecodeError:
-        corrupt_name = DATA_FILE.with_name(
-            f"{DATA_FILE.stem}.corrupt-{datetime.now(TZ).strftime('%Y%m%d-%H%M%S')}{DATA_FILE.suffix}"
+# ================== DATABASE ==================
+
+async def init_db():
+    global db_pool
+
+    db_pool = await asyncpg.create_pool(DATABASE_URL)
+
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS bot_data (
+                id   TEXT PRIMARY KEY,
+                data JSONB NOT NULL
+            )
+            """
         )
 
+    print("Đã kết nối Postgres.")
+
+
+async def load_data():
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT data FROM bot_data WHERE id = $1", DATA_KEY
+        )
+
+    if row is None:
+        return {}
+
+    data = row["data"]
+
+    # asyncpg trả JSONB dưới dạng chuỗi
+    if isinstance(data, str):
         try:
-            DATA_FILE.replace(corrupt_name)
-            print(f"File JSON hỏng, đã đổi tên thành: {corrupt_name}")
-        except OSError:
-            print("File JSON hỏng, không đổi tên được.")
+            data = json.loads(data)
+        except json.JSONDecodeError:
+            return {}
 
+    if not isinstance(data, dict):
         return {}
 
-    except OSError as e:
-        print(f"Lỗi đọc file data: {e}")
-        return {}
+    return data
 
 
-def save_data(data):
-    tmp_file = DATA_FILE.with_suffix(DATA_FILE.suffix + ".tmp")
+async def save_data(data):
+    payload = json.dumps(data, ensure_ascii=False)
 
-    with tmp_file.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-    os.replace(tmp_file, DATA_FILE)
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO bot_data (id, data)
+            VALUES ($1, $2::jsonb)
+            ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data
+            """,
+            DATA_KEY,
+            payload,
+        )
 
 
 def get_worker_data(data):
     data.setdefault(WORKER_NAME, {})
     data[WORKER_NAME].setdefault("_reported_cycles", [])
     return data[WORKER_NAME]
+
+
+# ================== WEB SERVER (KEEP ALIVE) ==================
+
+async def _health(request):
+    return web.Response(text="Bot tinh tien dang chay.")
+
+
+async def start_web_server():
+    # Render Web Service bắt buộc phải mở 1 cổng, nếu không sẽ báo lỗi
+    # "no open ports detected". Endpoint này cũng để UptimeRobot ping
+    # cho service khỏi ngủ.
+    app = web.Application()
+    app.router.add_get("/", _health)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+
+    site = web.TCPSite(runner, "0.0.0.0", WEB_PORT)
+    await site.start()
+
+    print(f"Web server keep-alive đang chạy ở cổng {WEB_PORT}")
 
 
 # ================== TIME / CYCLE ==================
@@ -296,7 +359,7 @@ async def on_message(message: discord.Message):
     cycle_key = get_cycle_key(msg_date)
 
     async with data_lock:
-        data = load_data()
+        data = await load_data()
         worker_data = get_worker_data(data)
 
         if video_already_recorded(worker_data, video_id):
@@ -306,7 +369,7 @@ async def on_message(message: discord.Message):
         worker_data.setdefault(cycle_key, [])
         worker_data[cycle_key].append(video_id)
 
-        save_data(data)
+        await save_data(data)
 
     print(f"Đã ghi nhận video của {WORKER_NAME}: {video_id} | cycle {cycle_key}")
 
@@ -321,7 +384,7 @@ async def monthly_payment_report():
     current_cycle = get_cycle_key(now.date())
 
     async with data_lock:
-        data = load_data()
+        data = await load_data()
         worker_data = get_worker_data(data)
 
         worker_data.setdefault("_reported_cycles", [])
@@ -346,7 +409,7 @@ async def monthly_payment_report():
                 cycles_to_report.append(cycle_key)
 
         if changed:
-            save_data(data)
+            await save_data(data)
 
     if not cycles_to_report:
         return
@@ -362,7 +425,7 @@ async def monthly_payment_report():
 
     for cycle_key in sorted(cycles_to_report):
         async with data_lock:
-            data = load_data()
+            data = await load_data()
             worker_data = get_worker_data(data)
 
             worker_data.setdefault("_reported_cycles", [])
@@ -390,7 +453,7 @@ async def monthly_payment_report():
             continue
 
         async with data_lock:
-            data = load_data()
+            data = await load_data()
             worker_data = get_worker_data(data)
 
             worker_data.setdefault("_reported_cycles", [])
@@ -400,7 +463,7 @@ async def monthly_payment_report():
 
             worker_data.setdefault(cycle_key, [])
 
-            save_data(data)
+            await save_data(data)
 
         print(f"Đã báo cáo tiền {WORKER_NAME} cycle {cycle_key}")
 
@@ -431,15 +494,11 @@ async def tienmilo(ctx, cycle_key: str = None):
         return
 
     async with data_lock:
-        data = load_data()
+        data = await load_data()
         worker_data = get_worker_data(data)
-
-        worker_data.setdefault(cycle_key, [])
 
         total_videos = count_cycle_videos(worker_data, cycle_key)
         total_money = total_videos * PRICE_PER_VIDEO
-
-        save_data(data)
 
     month_number = int(cycle_key.split("-")[1])
 
@@ -469,15 +528,11 @@ async def baocaomilo(ctx, cycle_key: str = None):
         return
 
     async with data_lock:
-        data = load_data()
+        data = await load_data()
         worker_data = get_worker_data(data)
-
-        worker_data.setdefault(cycle_key, [])
 
         total_videos = count_cycle_videos(worker_data, cycle_key)
         total_money = total_videos * PRICE_PER_VIDEO
-
-        save_data(data)
 
     month_number = int(cycle_key.split("-")[1])
 
@@ -506,7 +561,7 @@ async def danhsachmilo(ctx, cycle_key: str = None):
         return
 
     async with data_lock:
-        data = load_data()
+        data = await load_data()
         worker_data = get_worker_data(data)
 
         videos = worker_data.get(cycle_key, [])
@@ -589,7 +644,7 @@ async def themvideomilo(ctx, video_url_or_id: str, cycle_key: str = None):
         return
 
     async with data_lock:
-        data = load_data()
+        data = await load_data()
         worker_data = get_worker_data(data)
 
         if video_already_recorded(worker_data, video_id):
@@ -599,7 +654,7 @@ async def themvideomilo(ctx, video_url_or_id: str, cycle_key: str = None):
         worker_data.setdefault(cycle_key, [])
         worker_data[cycle_key].append(video_id)
 
-        save_data(data)
+        await save_data(data)
 
     await ctx.send(f"Đã thêm video `{video_id}` vào cycle `{cycle_key}`.")
 
@@ -630,7 +685,7 @@ async def xoavideomilo(ctx, video_url_or_id: str):
     removed_from = []
 
     async with data_lock:
-        data = load_data()
+        data = await load_data()
         worker_data = get_worker_data(data)
 
         for cycle_key, videos in worker_data.items():
@@ -645,7 +700,7 @@ async def xoavideomilo(ctx, video_url_or_id: str):
                 removed_from.append(cycle_key)
 
         if removed_from:
-            save_data(data)
+            await save_data(data)
 
     if not removed_from:
         await ctx.send(f"Không tìm thấy video `{video_id}` trong dữ liệu.")

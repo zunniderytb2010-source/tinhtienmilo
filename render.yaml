@@ -1,0 +1,30 @@
+# Blueprint để deploy lên Render (https://render.com).
+# Vào Render -> New -> Blueprint -> chọn repo này.
+# Sau đó điền các biến môi trường bên dưới trong dashboard.
+
+services:
+  - type: web
+    name: tinhtienmilo
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: VIDEO_CHANNEL_ID
+        sync: false
+      - key: YOUTUBE_BOT_ID
+        sync: false
+      - key: TSZ_USER_ID
+        sync: false
+      - key: WORKER_NAME
+        value: milo
+      - key: PRICE_PER_VIDEO
+        value: "113000"
+      - key: START_CYCLE_KEY
+        value: "2026-07"
+      - key: TIMEZONE
+        value: Asia/Ho_Chi_Minh
