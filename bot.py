@@ -325,6 +325,24 @@ def is_admin(ctx):
     return bool(perms and (perms.administrator or perms.manage_guild))
 
 
+def member_is_admin(member):
+    perms = getattr(member, "guild_permissions", None)
+    return bool(perms and (perms.administrator or perms.manage_guild))
+
+
+async def get_report_channel():
+    channel = bot.get_channel(REPORT_CHANNEL_ID)
+
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(REPORT_CHANNEL_ID)
+        except Exception as e:
+            print(f"Không lấy được kênh báo cáo {REPORT_CHANNEL_ID}: {e}")
+            return None
+
+    return channel
+
+
 # ================== BOT EVENTS ==================
 
 @bot.event
@@ -413,33 +431,105 @@ async def on_message(message: discord.Message):
 
     print(f"Đã ghi nhận video của {WORKER_NAME}: {video_id} | cycle {cycle_key}")
 
-    # Thả icon để thấy ngay là đã ghi nhận
+    # 💰 = đã tính | ❌ = admin bấm để bỏ video này khỏi lương (nếu không phải của Milo)
     try:
         await message.add_reaction("💰")
+        await message.add_reaction("❌")
     except Exception:
         pass
 
     # Nhắn thông báo cộng tiền vào kênh báo cáo (#tinh-tien)
-    report_channel = bot.get_channel(REPORT_CHANNEL_ID)
-
-    if report_channel is None:
-        try:
-            report_channel = await bot.fetch_channel(REPORT_CHANNEL_ID)
-        except Exception as e:
-            report_channel = None
-            print(f"Không lấy được kênh báo cáo {REPORT_CHANNEL_ID}: {e}")
+    report_channel = await get_report_channel()
 
     if report_channel is not None:
         try:
             await report_channel.send(
                 f"<@{TSZ_USER_ID}> {WORKER_NAME} đã ra thêm 1 video và được "
                 f"+{money_format(PRICE_PER_VIDEO)}đ, tổng tháng {month_number} hiện tại là "
-                f"{money_format(total_money)}đ ({total_videos} video)."
+                f"{money_format(total_money)}đ ({total_videos} video).\n"
+                f"(Nếu video này KHÔNG phải của {WORKER_NAME}, bấm ❌ trên tin video ở kênh video để bỏ.)"
             )
         except Exception as e:
             print(f"Gửi thông báo cộng tiền thất bại: {e}")
 
     await bot.process_commands(message)
+
+
+@bot.event
+async def on_raw_reaction_add(payload):
+    # Admin bấm ❌ trên tin video -> bỏ video đó khỏi lương.
+
+    if bot.user and payload.user_id == bot.user.id:
+        return
+
+    if payload.channel_id != VIDEO_CHANNEL_ID:
+        return
+
+    if str(payload.emoji) != "❌":
+        return
+
+    if not member_is_admin(payload.member):
+        return
+
+    channel = bot.get_channel(payload.channel_id)
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(payload.channel_id)
+        except Exception:
+            return
+
+    try:
+        msg = await channel.fetch_message(payload.message_id)
+    except Exception:
+        return
+
+    video_id = get_video_id_from_message(msg)
+    if not video_id:
+        return
+
+    removed_from = []
+
+    async with data_lock:
+        data = await load_data()
+        worker_data = get_worker_data(data)
+
+        for cycle_key, videos in worker_data.items():
+            if cycle_key.startswith("_"):
+                continue
+            if not isinstance(videos, list):
+                continue
+            if video_id in videos:
+                worker_data[cycle_key] = [v for v in videos if v != video_id]
+                removed_from.append(cycle_key)
+
+        if removed_from:
+            await save_data(data)
+
+        cycle_key = removed_from[0] if removed_from else None
+        total_videos = count_cycle_videos(worker_data, cycle_key) if cycle_key else 0
+
+    if not removed_from:
+        return
+
+    print(f"Đã bỏ video {video_id} khỏi lương {WORKER_NAME} (admin bấm ❌)")
+
+    try:
+        await msg.clear_reaction("💰")
+    except Exception:
+        pass
+
+    total_money = total_videos * PRICE_PER_VIDEO
+    month_number = int(cycle_key.split("-")[1])
+
+    report_channel = await get_report_channel()
+    if report_channel is not None:
+        try:
+            await report_channel.send(
+                f"❌ Đã bỏ 1 video khỏi lương của {WORKER_NAME} (không phải video của {WORKER_NAME}). "
+                f"Tổng tháng {month_number} còn {money_format(total_money)}đ ({total_videos} video)."
+            )
+        except Exception as e:
+            print(f"Gửi thông báo bỏ video thất bại: {e}")
 
 
 # ================== AUTO REPORT ==================
