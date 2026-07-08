@@ -1,0 +1,14 @@
+# Bí mật - KHÔNG BAO GIỜ commit
+.env
+
+# Dữ liệu lương
+milo_pay.json
+milo_pay.json.tmp
+*.corrupt-*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/

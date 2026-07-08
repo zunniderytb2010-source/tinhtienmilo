@@ -252,6 +252,12 @@ def money_format(amount: int):
     return f"{amount:,}".replace(",", ".")
 
 
+def is_admin(ctx):
+    # Chỉ admin / người quản lý server mới được sửa dữ liệu lương.
+    perms = getattr(ctx.author, "guild_permissions", None)
+    return bool(perms and (perms.administrator or perms.manage_guild))
+
+
 # ================== BOT EVENTS ==================
 
 @bot.event
@@ -322,11 +328,14 @@ async def monthly_payment_report():
         reported_cycles = set(worker_data["_reported_cycles"])
 
         cycles_to_report = []
+        changed = False
 
         # Tạo và kiểm tra tất cả cycle từ START_CYCLE_KEY đến cycle hiện tại.
         # Tháng nào 0 video vẫn báo 0đ.
         for cycle_key in iter_cycles(START_CYCLE_KEY, current_cycle):
-            worker_data.setdefault(cycle_key, [])
+            if cycle_key not in worker_data:
+                worker_data[cycle_key] = []
+                changed = True
 
             if cycle_key in reported_cycles:
                 continue
@@ -336,7 +345,8 @@ async def monthly_payment_report():
             if now >= due_time:
                 cycles_to_report.append(cycle_key)
 
-        save_data(data)
+        if changed:
+            save_data(data)
 
     if not cycles_to_report:
         return
@@ -557,6 +567,10 @@ async def themvideomilo(ctx, video_url_or_id: str, cycle_key: str = None):
     !themvideomilo E5qNw_lKqq8 2026-07
     """
 
+    if not is_admin(ctx):
+        await ctx.send("Bạn không có quyền dùng lệnh này.")
+        return
+
     if cycle_key is None:
         today = datetime.now(TZ).date()
         cycle_key = get_cycle_key(today)
@@ -600,6 +614,10 @@ async def xoavideomilo(ctx, video_url_or_id: str):
     !xoavideomilo E5qNw_lKqq8
     """
 
+    if not is_admin(ctx):
+        await ctx.send("Bạn không có quyền dùng lệnh này.")
+        return
+
     video_id = extract_youtube_video_id(video_url_or_id)
 
     if video_id is None and re.fullmatch(r"[a-zA-Z0-9_-]{11}", video_url_or_id):
@@ -636,6 +654,10 @@ async def xoavideomilo(ctx, video_url_or_id: str):
     await ctx.send(
         f"Đã xóa video `{video_id}` khỏi cycle: {', '.join(removed_from)}"
     )
+
+
+if not valid_cycle_key(START_CYCLE_KEY):
+    raise RuntimeError("START_CYCLE_KEY sai định dạng, phải là dạng YYYY-MM ví dụ 2026-07")
 
 
 bot.run(TOKEN)
