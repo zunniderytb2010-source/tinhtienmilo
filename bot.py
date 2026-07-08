@@ -584,6 +584,52 @@ async def tienmilo(ctx, cycle_key: str = None):
 
 
 @bot.command()
+async def tongmilo(ctx):
+    """
+    Tổng lũy kế tất cả các tháng (cộng dồn từ trước tới giờ).
+
+    Dùng:
+    !tongmilo
+    """
+
+    async with data_lock:
+        data = await load_data()
+        worker_data = get_worker_data(data)
+
+        per_cycle = {}
+        for cycle_key, videos in worker_data.items():
+            if cycle_key.startswith("_"):
+                continue
+            if not isinstance(videos, list):
+                continue
+
+            n = len(set(videos))
+            if n > 0:
+                per_cycle[cycle_key] = n
+
+    total_videos = sum(per_cycle.values())
+    total_money = total_videos * PRICE_PER_VIDEO
+
+    if total_videos == 0:
+        await ctx.send(f"Tổng lũy kế của {WORKER_NAME}: 0đ / 0 video.")
+        return
+
+    lines = []
+    for ck in sorted(per_cycle):
+        month = int(ck.split("-")[1])
+        n = per_cycle[ck]
+        lines.append(
+            f"- Tháng {month} (`{ck}`): {n} video / {money_format(n * PRICE_PER_VIDEO)}đ"
+        )
+
+    await ctx.send(
+        f"**Tổng lũy kế của {WORKER_NAME} (tất cả các tháng):**\n"
+        f"**{money_format(total_money)}đ** / {total_videos} video\n\n"
+        + "\n".join(lines)
+    )
+
+
+@bot.command()
 async def baocaomilo(ctx, cycle_key: str = None):
     """
     Báo cáo thủ công.
@@ -842,6 +888,34 @@ async def xoavideomilo(ctx, video_url_or_id: str):
     await ctx.send(
         f"Đã xóa video `{video_id}` khỏi cycle: {', '.join(removed_from)}"
     )
+
+
+@bot.command()
+async def resetmilo(ctx, xacnhan: str = None):
+    """
+    XÓA SẠCH toàn bộ dữ liệu lương (video + lịch sử báo cáo). KHÔNG hoàn tác.
+
+    Dùng:
+    !resetmilo XACNHAN
+    """
+
+    if not is_admin(ctx):
+        await ctx.send("Bạn không có quyền dùng lệnh này.")
+        return
+
+    if xacnhan != "XACNHAN":
+        await ctx.send(
+            "⚠️ Lệnh này XÓA SẠCH toàn bộ dữ liệu lương, không hoàn tác được.\n"
+            "Chắc chắn thì gõ: `!resetmilo XACNHAN`"
+        )
+        return
+
+    async with data_lock:
+        data = await load_data()
+        data[WORKER_NAME] = {"_reported_cycles": []}
+        await save_data(data)
+
+    await ctx.send(f"✅ Đã xóa sạch dữ liệu của {WORKER_NAME}. Bắt đầu lại từ 0.")
 
 
 if not valid_cycle_key(START_CYCLE_KEY):
