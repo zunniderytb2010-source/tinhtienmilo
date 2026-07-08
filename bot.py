@@ -408,6 +408,12 @@ async def on_message(message: discord.Message):
 
     print(f"Đã ghi nhận video của {WORKER_NAME}: {video_id} | cycle {cycle_key}")
 
+    # Thả icon để thấy ngay là đã ghi nhận
+    try:
+        await message.add_reaction("💰")
+    except Exception:
+        pass
+
     await bot.process_commands(message)
 
 
@@ -509,6 +515,29 @@ async def before_monthly_payment_report():
 
 
 # ================== COMMANDS ==================
+
+@bot.command()
+async def kiemtramilo(ctx):
+    """
+    Kiểm tra cấu hình ngay trong Discord.
+    Gõ !kiemtramilo trong kênh #video-moi để xem kênh có khớp không.
+    """
+
+    here = ctx.channel.id
+    match = "✅ KHỚP" if here == VIDEO_CHANNEL_ID else "❌ KHÔNG KHỚP"
+
+    yt = YOUTUBE_BOT_ID if YOUTUBE_BOT_ID != 0 else "0 (tính mọi bot/webhook)"
+
+    await ctx.send(
+        f"**Kiểm tra cấu hình bot:**\n"
+        f"- Kênh bạn đang gõ: `{here}`\n"
+        f"- VIDEO_CHANNEL_ID đã set: `{VIDEO_CHANNEL_ID}`\n"
+        f"- Kết quả: **{match}**\n"
+        f"- YOUTUBE_BOT_ID: `{yt}`\n"
+        f"- Worker: `{WORKER_NAME}` | Giá: {money_format(PRICE_PER_VIDEO)}đ\n\n"
+        f"Nếu KHÔNG KHỚP: copy số `{here}` vào biến `VIDEO_CHANNEL_ID` trên Render."
+    )
+
 
 @bot.command()
 async def tienmilo(ctx, cycle_key: str = None):
