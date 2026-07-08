@@ -10,6 +10,10 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
     envVars:
+      # discord.py 2.4 cần module audioop (đã bị xóa ở Python 3.13+),
+      # nên ép dùng Python 3.12.
+      - key: PYTHON_VERSION
+        value: "3.12.8"
       - key: DISCORD_TOKEN
         sync: false
       - key: DATABASE_URL
