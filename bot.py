@@ -618,6 +618,64 @@ async def baocaomilo(ctx, cycle_key: str = None):
 
 
 @bot.command()
+async def testbaocao(ctx, cycle_key: str = None):
+    """
+    Gửi thử báo cáo vào ĐÚNG kênh REPORT_CHANNEL_ID (kênh báo cáo tự động),
+    để kiểm tra báo cáo có rơi đúng #tinh-tien không.
+
+    Dùng:
+    !testbaocao
+    !testbaocao 2026-07
+    """
+
+    if not is_admin(ctx):
+        await ctx.send("Bạn không có quyền dùng lệnh này.")
+        return
+
+    if cycle_key is None:
+        cycle_key = get_cycle_key(datetime.now(TZ).date())
+
+    if not valid_cycle_key(cycle_key):
+        await ctx.send("Sai định dạng. Dùng dạng: `!testbaocao 2026-07`")
+        return
+
+    channel = bot.get_channel(REPORT_CHANNEL_ID)
+
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(REPORT_CHANNEL_ID)
+        except Exception as e:
+            await ctx.send(
+                f"❌ Không tìm thấy kênh báo cáo `{REPORT_CHANNEL_ID}`: {e}\n"
+                f"Kiểm tra lại biến REPORT_CHANNEL_ID trên Render."
+            )
+            return
+
+    async with data_lock:
+        data = await load_data()
+        worker_data = get_worker_data(data)
+
+        total_videos = count_cycle_videos(worker_data, cycle_key)
+        total_money = total_videos * PRICE_PER_VIDEO
+
+    month_number = int(cycle_key.split("-")[1])
+
+    try:
+        await channel.send(
+            f"[THỬ] <@{TSZ_USER_ID}> tổng tiền của {WORKER_NAME} tháng {month_number} "
+            f"là {money_format(total_money)}đ và có {total_videos} video đã đăng"
+        )
+    except Exception as e:
+        await ctx.send(f"❌ Gửi vào kênh báo cáo thất bại: {e}")
+        return
+
+    await ctx.send(
+        f"✅ Đã gửi thử báo cáo vào kênh `{REPORT_CHANNEL_ID}` (<#{REPORT_CHANNEL_ID}>). "
+        f"Kiểm tra kênh đó xem tin đã tới chưa."
+    )
+
+
+@bot.command()
 async def danhsachmilo(ctx, cycle_key: str = None):
     """
     Xem danh sách video ID đã tính tiền.
