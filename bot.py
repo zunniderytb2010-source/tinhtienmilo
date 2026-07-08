@@ -620,6 +620,33 @@ async def before_monthly_payment_report():
 # ================== COMMANDS ==================
 
 @bot.command()
+async def helpzun(ctx):
+    """Hiện tất cả lệnh và cách dùng."""
+
+    p = COMMAND_PREFIX
+
+    await ctx.send(
+        f"**📋 DANH SÁCH LỆNH — BOT TÍNH TIỀN {WORKER_NAME.upper()}**\n\n"
+        f"**Ai cũng dùng được:**\n"
+        f"• `{p}tienmilo [2026-07]` — Xem tiền tạm tính của tháng (bỏ trống = tháng hiện tại).\n"
+        f"• `{p}tongmilo` — Tổng lũy kế TẤT CẢ các tháng + chi tiết từng tháng.\n"
+        f"• `{p}danhsachmilo [2026-07]` — Danh sách các video đã được tính tiền.\n"
+        f"• `{p}baocaomilo [2026-07]` — Báo cáo tiền 1 tháng, tag người nhận (bỏ trống = tháng trước).\n"
+        f"• `{p}kiemtramilo` — Kiểm tra bot đã gắn đúng kênh chưa.\n"
+        f"• `{p}helpzun` — Hiện bảng trợ giúp này.\n\n"
+        f"**Chỉ admin:**\n"
+        f"• `{p}themvideomilo <link/id> [2026-07]` — Thêm video thủ công nếu bot bị sót.\n"
+        f"• `{p}xoavideomilo <link/id>` — Xóa 1 video khỏi dữ liệu.\n"
+        f"• `{p}testbaocao [2026-07]` — Gửi thử báo cáo vào kênh báo cáo.\n"
+        f"• `{p}resetmilo XACNHAN` — ⚠️ Xóa SẠCH toàn bộ dữ liệu, làm lại từ đầu.\n\n"
+        f"**Tự động (không cần gõ):**\n"
+        f"• Bot YouTube ra video mới → tự cộng {money_format(PRICE_PER_VIDEO)}đ và báo vào kênh báo cáo.\n"
+        f"• Mỗi thông báo có nút ❌ — admin bấm để bỏ video đó khỏi lương (nếu không phải của {WORKER_NAME}).\n"
+        f"• Ngày 9 hàng tháng: tự chốt và báo cáo tổng tháng trước."
+    )
+
+
+@bot.command()
 async def kiemtramilo(ctx):
     """
     Kiểm tra cấu hình ngay trong Discord.
