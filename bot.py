@@ -60,8 +60,9 @@ if not DATABASE_URL:
 if VIDEO_CHANNEL_ID == 0:
     raise RuntimeError("Thiếu VIDEO_CHANNEL_ID trong biến môi trường")
 
-if YOUTUBE_BOT_ID == 0:
-    raise RuntimeError("Thiếu YOUTUBE_BOT_ID trong biến môi trường")
+# YOUTUBE_BOT_ID là tùy chọn:
+# - Nếu set: chỉ tính tin của đúng bot/webhook đó.
+# - Nếu để trống (0): tính mọi link YouTube do bot/webhook đăng trong kênh.
 
 if TSZ_USER_ID == 0:
     raise RuntimeError("Thiếu TSZ_USER_ID trong biến môi trường")
@@ -355,14 +356,27 @@ async def on_message(message: discord.Message):
         await bot.process_commands(message)
         return
 
-    if message.author.id != YOUTUBE_BOT_ID:
-        if DEBUG:
-            print(
-                f"[DEBUG] Đúng kênh nhưng author={message.author.id} "
-                f"KHÁC YOUTUBE_BOT_ID={YOUTUBE_BOT_ID}"
-            )
-        await bot.process_commands(message)
-        return
+    is_bot_or_webhook = bool(message.author.bot or message.webhook_id)
+
+    if YOUTUBE_BOT_ID != 0:
+        # Đã cấu hình: khớp theo id của bot HOẶC id webhook.
+        if message.author.id != YOUTUBE_BOT_ID and message.webhook_id != YOUTUBE_BOT_ID:
+            if DEBUG:
+                print(
+                    f"[DEBUG] Đúng kênh nhưng author={message.author.id} / "
+                    f"webhook={message.webhook_id} KHÁC YOUTUBE_BOT_ID={YOUTUBE_BOT_ID}"
+                )
+            await bot.process_commands(message)
+            return
+    else:
+        # Chưa cấu hình: chỉ tính tin do bot/webhook đăng, bỏ qua người thật gõ tay.
+        if not is_bot_or_webhook:
+            if DEBUG:
+                print(
+                    f"[DEBUG] Bỏ qua vì không phải bot/webhook: author={message.author.id}"
+                )
+            await bot.process_commands(message)
+            return
 
     video_id = get_video_id_from_message(message)
 
