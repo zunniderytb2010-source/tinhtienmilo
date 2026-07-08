@@ -356,17 +356,6 @@ async def on_message(message: discord.Message):
         await bot.process_commands(message)
         return
 
-    if DEBUG:
-        try:
-            vid_try = get_video_id_from_message(message)
-            await message.channel.send(
-                f"🔧 DEBUG | author=`{message.author.id}` bot=`{message.author.bot}` "
-                f"webhook=`{message.webhook_id}` embeds=`{len(message.embeds)}` "
-                f"video_id=`{vid_try}` content=`{(message.content or '')[:80]}`"
-            )
-        except Exception as e:
-            print(f"[DEBUG] gửi debug thất bại: {e}")
-
     is_bot_or_webhook = bool(message.author.bot or message.webhook_id)
 
     if YOUTUBE_BOT_ID != 0:
