@@ -430,15 +430,25 @@ async def on_message(message: discord.Message):
     except Exception:
         pass
 
-    # Nhắn thông báo cộng tiền
-    try:
-        await message.channel.send(
-            f"<@{TSZ_USER_ID}> {WORKER_NAME} đã ra thêm 1 video và được "
-            f"+{money_format(PRICE_PER_VIDEO)}đ, tổng tháng {month_number} hiện tại là "
-            f"{money_format(total_money)}đ ({total_videos} video)."
-        )
-    except Exception as e:
-        print(f"Gửi thông báo cộng tiền thất bại: {e}")
+    # Nhắn thông báo cộng tiền vào kênh báo cáo (#tinh-tien)
+    report_channel = bot.get_channel(REPORT_CHANNEL_ID)
+
+    if report_channel is None:
+        try:
+            report_channel = await bot.fetch_channel(REPORT_CHANNEL_ID)
+        except Exception as e:
+            report_channel = None
+            print(f"Không lấy được kênh báo cáo {REPORT_CHANNEL_ID}: {e}")
+
+    if report_channel is not None:
+        try:
+            await report_channel.send(
+                f"<@{TSZ_USER_ID}> {WORKER_NAME} đã ra thêm 1 video và được "
+                f"+{money_format(PRICE_PER_VIDEO)}đ, tổng tháng {month_number} hiện tại là "
+                f"{money_format(total_money)}đ ({total_videos} video)."
+            )
+        except Exception as e:
+            print(f"Gửi thông báo cộng tiền thất bại: {e}")
 
     await bot.process_commands(message)
 
