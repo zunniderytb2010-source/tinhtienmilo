@@ -44,6 +44,9 @@ REPORT_MINUTE = int(os.getenv("REPORT_MINUTE", "0"))
 
 COMMAND_PREFIX = os.getenv("COMMAND_PREFIX", "!")
 
+# Bật DEBUG=1 để in log soi tin nhắn (dùng khi chưa cộng tiền được).
+DEBUG = os.getenv("DEBUG", "0") == "1"
+
 # Render tự set PORT cho Web Service. Local thì mặc định 10000.
 WEB_PORT = int(os.getenv("PORT", "10000"))
 
@@ -341,17 +344,35 @@ async def on_message(message: discord.Message):
     if bot.user and message.author.id == bot.user.id:
         return
 
+    if DEBUG:
+        print(
+            f"[DEBUG] channel={message.channel.id} author={message.author.id} "
+            f"({message.author}) webhook={message.webhook_id} "
+            f"embeds={len(message.embeds)} content={message.content[:120]!r}"
+        )
+
     if message.channel.id != VIDEO_CHANNEL_ID:
         await bot.process_commands(message)
         return
 
     if message.author.id != YOUTUBE_BOT_ID:
+        if DEBUG:
+            print(
+                f"[DEBUG] Đúng kênh nhưng author={message.author.id} "
+                f"KHÁC YOUTUBE_BOT_ID={YOUTUBE_BOT_ID}"
+            )
         await bot.process_commands(message)
         return
 
     video_id = get_video_id_from_message(message)
 
     if not video_id:
+        if DEBUG:
+            embeds_info = [(e.title, e.url, e.description) for e in message.embeds]
+            print(
+                f"[DEBUG] Đúng kênh + đúng bot nhưng KHÔNG tìm được video ID. "
+                f"content={message.content!r} embeds={embeds_info}"
+            )
         await bot.process_commands(message)
         return
 
