@@ -198,6 +198,26 @@ def valid_cycle_key(key: str):
     return bool(re.fullmatch(r"\d{4}-\d{2}", key))
 
 
+def valid_date(s: str):
+    try:
+        datetime.strptime(s, "%Y-%m-%d")
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+def get_recorded_video_ids(worker_data):
+    # Tất cả video ID hiện đang được tính (nguồn sự thật là các list theo cycle).
+    ids = set()
+    for cycle_key, videos in worker_data.items():
+        if cycle_key.startswith("_"):
+            continue
+        if not isinstance(videos, list):
+            continue
+        ids.update(videos)
+    return ids
+
+
 def add_cycle(cycle_key: str, delta: int):
     year, month = parse_cycle_key(cycle_key)
     year, month = shift_month(year, month, delta)
@@ -422,6 +442,9 @@ async def on_message(message: discord.Message):
         worker_data.setdefault(cycle_key, [])
         worker_data[cycle_key].append(video_id)
 
+        worker_data.setdefault("_video_dates", {})
+        worker_data["_video_dates"][video_id] = msg_date.isoformat()
+
         await save_data(data)
 
         total_videos = count_cycle_videos(worker_data, cycle_key)
@@ -630,7 +653,9 @@ async def helpzun(ctx):
         f"**Ai cũng dùng được:**\n"
         f"• `{p}tienmilo [2026-07]` — Xem tiền tạm tính của tháng (bỏ trống = tháng hiện tại).\n"
         f"• `{p}tongmilo` — Tổng lũy kế TẤT CẢ các tháng + chi tiết từng tháng.\n"
-        f"• `{p}danhsachmilo [2026-07]` — Danh sách các video đã được tính tiền.\n"
+        f"• `{p}traluong 2026-01-01 2026-07-31` — Tra lương theo khoảng ngày.\n"
+        f"• `{p}thongke` — Thống kê tổng quan (tháng này, tháng trước, tổng, trung bình).\n"
+        f"• `{p}danhsachmilo [2026-07]` — Danh sách video đã tính (kèm ngày).\n"
         f"• `{p}baocaomilo [2026-07]` — Báo cáo tiền 1 tháng, tag người nhận (bỏ trống = tháng trước).\n"
         f"• `{p}kiemtramilo` — Kiểm tra bot đã gắn đúng kênh chưa.\n"
         f"• `{p}helpzun` — Hiện bảng trợ giúp này.\n\n"
@@ -745,6 +770,113 @@ async def tongmilo(ctx):
         f"**Tổng lũy kế của {WORKER_NAME} (tất cả các tháng):**\n"
         f"**{money_format(total_money)}đ** / {total_videos} video\n\n"
         + "\n".join(lines)
+    )
+
+
+@bot.command()
+async def traluong(ctx, tu: str = None, den: str = None):
+    """
+    Tra lương theo khoảng ngày (tính theo ngày video được ghi nhận).
+
+    Dùng:
+    !traluong 2026-01-01 2026-07-31
+    """
+
+    if not tu or not den:
+        await ctx.send("Dùng: `!traluong 2026-01-01 2026-07-31` (từ ngày → đến ngày)")
+        return
+
+    if not (valid_date(tu) and valid_date(den)):
+        await ctx.send("Sai định dạng ngày. Dùng `YYYY-MM-DD`, ví dụ `2026-07-01`.")
+        return
+
+    if tu > den:
+        tu, den = den, tu
+
+    async with data_lock:
+        data = await load_data()
+        worker_data = get_worker_data(data)
+
+        recorded = get_recorded_video_ids(worker_data)
+        video_dates = dict(worker_data.get("_video_dates", {}))
+
+    count = 0
+    no_date = 0
+    per_month = {}
+
+    for vid in recorded:
+        d = video_dates.get(vid)
+        if not d:
+            no_date += 1
+            continue
+        if tu <= d <= den:
+            count += 1
+            m = d[:7]
+            per_month[m] = per_month.get(m, 0) + 1
+
+    total_money = count * PRICE_PER_VIDEO
+
+    lines = [
+        f"- Tháng {m[5:7]} (`{m}`): {n} video / {money_format(n * PRICE_PER_VIDEO)}đ"
+        for m, n in sorted(per_month.items())
+    ]
+
+    text = (
+        f"**Lương {WORKER_NAME} từ {tu} đến {den}:**\n"
+        f"**{money_format(total_money)}đ** / {count} video\n"
+    )
+    text += ("\n".join(lines) if lines else "(không có video nào trong khoảng này)")
+
+    if no_date:
+        text += f"\n\n⚠️ Có {no_date} video cũ chưa lưu ngày nên không tính vào khoảng."
+
+    await ctx.send(text)
+
+
+@bot.command()
+async def thongke(ctx):
+    """
+    Thống kê tổng quan lương.
+
+    Dùng:
+    !thongke
+    """
+
+    today = datetime.now(TZ).date()
+    this_cycle = get_cycle_key(today)
+    last_cycle = add_cycle(this_cycle, -1)
+
+    async with data_lock:
+        data = await load_data()
+        worker_data = get_worker_data(data)
+
+        this_n = count_cycle_videos(worker_data, this_cycle)
+        last_n = count_cycle_videos(worker_data, last_cycle)
+
+        per_cycle = {}
+        for ck, vids in worker_data.items():
+            if ck.startswith("_") or not isinstance(vids, list):
+                continue
+            n = len(set(vids))
+            if n > 0:
+                per_cycle[ck] = n
+
+    total_videos = sum(per_cycle.values())
+    total_money = total_videos * PRICE_PER_VIDEO
+    months_active = len(per_cycle)
+    avg = (total_videos / months_active) if months_active else 0
+
+    this_month = int(this_cycle.split("-")[1])
+    last_month = int(last_cycle.split("-")[1])
+
+    await ctx.send(
+        f"**📊 THỐNG KÊ LƯƠNG {WORKER_NAME.upper()}**\n"
+        f"• Tháng này (tháng {this_month}): {this_n} video / {money_format(this_n * PRICE_PER_VIDEO)}đ\n"
+        f"• Tháng trước (tháng {last_month}): {last_n} video / {money_format(last_n * PRICE_PER_VIDEO)}đ\n"
+        f"• Tổng lũy kế: {total_videos} video / {money_format(total_money)}đ\n"
+        f"• Số tháng có video: {months_active}\n"
+        f"• Trung bình: {avg:.1f} video/tháng\n"
+        f"• Giá mỗi video: {money_format(PRICE_PER_VIDEO)}đ"
     )
 
 
@@ -867,6 +999,8 @@ async def danhsachmilo(ctx, cycle_key: str = None):
         if not isinstance(videos, list):
             videos = []
 
+        video_dates = dict(worker_data.get("_video_dates", {}))
+
     total_videos = len(set(videos))
     total_money = total_videos * PRICE_PER_VIDEO
 
@@ -878,7 +1012,8 @@ async def danhsachmilo(ctx, cycle_key: str = None):
 
     lines = []
     for index, video_id in enumerate(sorted(set(videos)), start=1):
-        lines.append(f"{index}. https://youtu.be/{video_id}")
+        d = video_dates.get(video_id, "??")
+        lines.append(f"{index}. [{d}] https://youtu.be/{video_id}")
 
     text = (
         f"Danh sách video của {WORKER_NAME} cycle `{cycle_key}`:\n"
@@ -951,6 +1086,9 @@ async def themvideomilo(ctx, video_url_or_id: str, cycle_key: str = None):
 
         worker_data.setdefault(cycle_key, [])
         worker_data[cycle_key].append(video_id)
+
+        worker_data.setdefault("_video_dates", {})
+        worker_data["_video_dates"][video_id] = datetime.now(TZ).date().isoformat()
 
         await save_data(data)
 
